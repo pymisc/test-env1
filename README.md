@@ -1,2 +1,2 @@
 # test-env1
-Temporary repo
+Temporary repo to test split environments coordination
