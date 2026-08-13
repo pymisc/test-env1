@@ -6,7 +6,7 @@ producer.py
 Simulates a software build/release producer.
 
 The script:
-1. Creates a 1 GiB random binary artifact.
+1. Creates a 256 MiB random binary artifact.
 2. Calculates the artifact's SHA-256 checksum.
 3. Creates a YAML metadata file containing:
    - artifact filename
@@ -32,7 +32,7 @@ OUTPUT_DIR = Path("/home/output")
 PACKAGE_NAME = "packagefile.bin"
 METADATA_NAME = "packagefile.yaml"
 
-BLOCK_SIZE = "4M"
+BLOCK_SIZE = "1M"
 BLOCK_COUNT = 256
 
 
@@ -41,7 +41,7 @@ BLOCK_COUNT = 256
 # ---------------------------------------------------------------------------
 
 def create_binary_file(output_file: Path) -> None:
-    """Create a 1 GiB random binary file using dd."""
+    """Create a 256 MiB random binary file using dd."""
 
     print(f"Creating binary artifact: {output_file}")
 
