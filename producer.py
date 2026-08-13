@@ -134,7 +134,7 @@ def create_metadata(
 
     metadata_file.write_text(metadata, encoding="utf-8")
 
-    print(f"Metadata created: {metadata_file}")
+    print(f"Metadata file created: {metadata_file}")
 
 
 # ---------------------------------------------------------------------------
