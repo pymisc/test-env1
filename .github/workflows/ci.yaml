@@ -1,4 +1,4 @@
-name: Run Producer
+name: Producer CI Pipeline
 
 on:
   workflow_dispatch:
