@@ -31,7 +31,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v5
         with:
-          role-to-assume: arn:aws:iam::<ACCOUNT-ID>:role/test-env1-producer
+          role-to-assume: arn:aws:iam::389821258260:role/test-env1-producer
           aws-region: us-west-2
 
       - name: Verify AWS identity
