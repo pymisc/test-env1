@@ -158,8 +158,6 @@ def upload_to_s3(file_path: Path) -> None:
         [
             "aws",
             "s3",
-            "--profile",
-            AWS_PROFILE,
             "cp",
             str(file_path),
             destination,
