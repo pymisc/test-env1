@@ -6,21 +6,21 @@ producer.py
 Simulates the producer side of a split-environment software
 build / qualification workflow.
 
-The script performs the following steps:
+Workflow:
 
-1. Creates a 256 MiB random binary artifact.
-2. Calculates the artifact's SHA-256 checksum.
-3. Creates a YAML metadata/manifest file containing:
+1. Create a 256 MiB random binary artifact.
+2. Calculate the artifact's SHA-256 checksum.
+3. Create a YAML metadata manifest containing:
    - artifact filename
    - artifact size
    - SHA-256 checksum
    - creation timestamp
-4. Uploads the binary artifact to a shared S3 bucket.
-5. Uploads the YAML manifest to S3 after the binary upload completes.
+4. Upload the binary artifact to a shared S3 bucket.
+5. Upload the YAML manifest after the binary upload completes.
 
-The YAML manifest is uploaded last intentionally. In a split-environment
-design, the consumer can treat the presence of the manifest as an
-indication that the corresponding binary artifact is ready for processing.
+The manifest is intentionally uploaded LAST. The consumer environment
+can treat the presence of the manifest as an indication that the
+corresponding binary artifact is ready for processing.
 """
 
 import hashlib
@@ -33,22 +33,22 @@ from pathlib import Path
 # Configuration
 # ---------------------------------------------------------------------------
 
-# Local directory where generated files will be stored.
+# Local directory where generated files are stored.
 OUTPUT_DIR = Path("/home/output")
 
 # Artifact and manifest filenames.
 PACKAGE_NAME = "packagefile.bin"
 METADATA_NAME = "packagefile.yaml"
 
-# dd configuration:
-# 1 MiB x 256 blocks = 256 MiB artifact.
+# Binary artifact size:
+# 1 MiB x 256 blocks = 256 MiB.
 BLOCK_SIZE = "1M"
 BLOCK_COUNT = 256
 
-# Shared S3 location used to transfer artifacts between environments.
+# Shared S3 bucket used to exchange data between environments.
 S3_BUCKET = "s3://split-env-data"
 
-# AWS CLI profile already configured on the producer machine.
+# AWS CLI profile configured on the producer machine.
 AWS_PROFILE = "s3profile"
 
 
@@ -60,12 +60,11 @@ def create_binary_file(output_file: Path) -> None:
     """
     Create a 256 MiB random binary artifact using the Linux dd command.
 
-    /dev/urandom is used so the generated file contains random data,
-    making it suitable for simulating a real build/release artifact.
+    /dev/urandom is used to generate random binary data and simulate
+    a software/firmware build artifact.
     """
 
-    print()
-    print(f"[1/5] Creating binary artifact: {output_file}")
+    print(f"Creating binary artifact: {output_file}")
 
     subprocess.run(
         [
@@ -83,20 +82,17 @@ def create_binary_file(output_file: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Checksum generation
+# Checksum calculation
 # ---------------------------------------------------------------------------
 
 def calculate_sha256(file_path: Path) -> str:
     """
-    Calculate the SHA-256 checksum of a file.
+    Calculate and return the SHA-256 checksum of a file.
 
-    The file is read in 1 MiB chunks rather than loading the entire
-    artifact into memory. This allows the same approach to work with
-    much larger artifacts.
+    The file is read in 1 MiB chunks instead of loading the entire
+    artifact into memory. This allows the same function to work
+    efficiently with much larger artifacts.
     """
-
-    print()
-    print(f"[2/5] Calculating SHA-256 checksum: {file_path.name}")
 
     sha256 = hashlib.sha256()
 
@@ -123,12 +119,9 @@ def create_metadata(
     """
     Create a YAML manifest describing the generated artifact.
 
-    The consumer environment will later use this metadata to identify
-    the artifact and verify that its SHA-256 checksum matches.
+    The consumer environment can use this metadata to identify the
+    expected artifact and verify its SHA-256 checksum.
     """
-
-    print()
-    print(f"[3/5] Creating metadata manifest: {metadata_file}")
 
     creation_time = datetime.now(timezone.utc).isoformat()
 
@@ -141,7 +134,7 @@ def create_metadata(
 
     metadata_file.write_text(metadata, encoding="utf-8")
 
-    print("Metadata creation completed.")
+    print(f"Metadata created: {metadata_file}")
 
 
 # ---------------------------------------------------------------------------
@@ -152,13 +145,14 @@ def upload_to_s3(file_path: Path) -> None:
     """
     Upload a file to the shared S3 bucket using the AWS CLI.
 
-    subprocess.run(..., check=True) causes the script to stop immediately
-    if the AWS CLI command returns a non-zero exit code.
+    check=True causes subprocess.run() to raise an exception if the
+    AWS CLI command returns a non-zero exit code. This prevents the
+    producer workflow from continuing after a failed upload.
     """
 
     destination = f"{S3_BUCKET}/{file_path.name}"
 
-    print(f"Uploading {file_path.name} -> {destination}")
+    print(f"Uploading {file_path} -> {destination}")
 
     subprocess.run(
         [
@@ -182,47 +176,78 @@ def upload_to_s3(file_path: Path) -> None:
 
 def main() -> None:
     """
-    Generate the artifact and manifest, then publish both to S3.
+    Execute the producer workflow.
+
+    The main function owns the workflow sequencing while the individual
+    functions remain focused on performing one specific operation.
     """
 
-    # Create the local output directory if it does not already exist.
+    # Ensure the local output directory exists.
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     package_file = OUTPUT_DIR / PACKAGE_NAME
     metadata_file = OUTPUT_DIR / METADATA_NAME
 
+    # -----------------------------------------------------------------------
     # Step 1: Generate the simulated software artifact.
+    # -----------------------------------------------------------------------
+
+    print()
+    print("[1/5] Generating binary artifact...")
+
     create_binary_file(package_file)
 
-    # Step 2: Calculate the artifact checksum.
+    # -----------------------------------------------------------------------
+    # Step 2: Calculate the SHA-256 checksum.
+    # -----------------------------------------------------------------------
+
+    print()
+    print("[2/5] Calculating artifact SHA-256 checksum...")
+
     checksum = calculate_sha256(package_file)
 
-    # Step 3: Generate the YAML manifest.
+    # -----------------------------------------------------------------------
+    # Step 3: Create the YAML artifact manifest.
+    # -----------------------------------------------------------------------
+
+    print()
+    print("[3/5] Creating artifact metadata manifest...")
+
     create_metadata(
         metadata_file=metadata_file,
         package_file=package_file,
         checksum=checksum,
     )
 
-    # Step 4:
-    # Upload the binary artifact FIRST.
+    # -----------------------------------------------------------------------
+    # Step 4: Upload the binary artifact FIRST.
     #
-    # This is intentional. The consumer should never see the manifest
-    # before the corresponding binary artifact has finished uploading.
+    # The artifact must be completely available before the manifest is
+    # published. This prevents the consumer from discovering a manifest
+    # that references an artifact that is still being uploaded.
+    # -----------------------------------------------------------------------
+
     print()
     print("[4/5] Uploading binary artifact to S3...")
+
     upload_to_s3(package_file)
 
-    # Step 5:
-    # Upload the manifest LAST.
+    # -----------------------------------------------------------------------
+    # Step 5: Upload the manifest LAST.
     #
-    # Later, the consumer can watch for new manifest files and treat
-    # their appearance as the "artifact ready" signal.
+    # The consumer can treat the presence of the manifest as the
+    # "artifact ready" signal.
+    # -----------------------------------------------------------------------
+
     print()
     print("[5/5] Uploading metadata manifest to S3...")
+
     upload_to_s3(metadata_file)
 
-    # Final summary.
+    # -----------------------------------------------------------------------
+    # Final summary
+    # -----------------------------------------------------------------------
+
     print()
     print("=" * 60)
     print("Producer completed successfully.")
@@ -233,6 +258,10 @@ def main() -> None:
     print(f"S3 manifest    : {S3_BUCKET}/{METADATA_NAME}")
     print(f"SHA-256        : {checksum}")
 
+
+# ---------------------------------------------------------------------------
+# Script entry point
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     main()
