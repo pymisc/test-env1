@@ -34,7 +34,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 # Local directory where generated files are stored.
-OUTPUT_DIR = Path("/home/output")
+OUTPUT_DIR = Path("output")
 
 # Artifact and manifest filenames.
 PACKAGE_NAME = "packagefile.bin"
