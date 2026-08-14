@@ -8,23 +8,32 @@ build / qualification workflow.
 
 Workflow:
 
-1. Create a 256 MiB random binary artifact.
-2. Calculate the artifact's SHA-256 checksum.
-3. Create a YAML metadata manifest containing:
+1. Generate a unique job ID (UUID) for the submission.
+2. Create a 256 MiB random binary artifact.
+3. Calculate the artifact's SHA-256 checksum.
+4. Create a YAML metadata manifest containing:
+   - job ID
    - artifact filename
    - artifact size
    - SHA-256 checksum
    - creation timestamp
-4. Upload the binary artifact to a shared S3 bucket.
-5. Upload the YAML manifest after the binary upload completes.
+5. Upload the binary artifact to:
 
-The manifest is intentionally uploaded LAST. The consumer environment
-can treat the presence of the manifest as an indication that the
-corresponding binary artifact is ready for processing.
+       s3://split-env-data/incoming/<job-id>/packagefile.bin
+
+6. Upload the YAML manifest LAST to:
+
+       s3://split-env-data/incoming/<job-id>/packagefile.yaml
+
+The manifest is intentionally uploaded last. The consumer environment
+can treat the presence of packagefile.yaml as an indication that the
+corresponding binary artifact has been completely published and is
+ready for processing.
 """
 
 import hashlib
 import subprocess
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,8 +57,8 @@ BLOCK_COUNT = 256
 # Shared S3 bucket used to exchange data between environments.
 S3_BUCKET = "s3://split-env-data"
 
-# AWS CLI profile configured on the producer machine.
-AWS_PROFILE = "s3profile"
+# S3 prefix where new submissions are published.
+S3_INCOMING_PREFIX = "incoming"
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +70,7 @@ def create_binary_file(output_file: Path) -> None:
     Create a 256 MiB random binary artifact using the Linux dd command.
 
     /dev/urandom is used to generate random binary data and simulate
-    a software/firmware build artifact.
+    a software or firmware build artifact.
     """
 
     print(f"Creating binary artifact: {output_file}")
@@ -115,17 +124,21 @@ def create_metadata(
     metadata_file: Path,
     package_file: Path,
     checksum: str,
+    job_id: str,
 ) -> None:
     """
     Create a YAML manifest describing the generated artifact.
 
-    The consumer environment can use this metadata to identify the
-    expected artifact and verify its SHA-256 checksum.
+    The manifest contains the unique job ID as well as information
+    required by the consumer to locate and validate the artifact.
     """
 
     creation_time = datetime.now(timezone.utc).isoformat()
 
-    metadata = f"""artifact:
+    metadata = f"""job:
+  id: {job_id}
+
+artifact:
   filename: {package_file.name}
   size_bytes: {package_file.stat().st_size}
   sha256: {checksum}
@@ -141,16 +154,36 @@ def create_metadata(
 # S3 upload
 # ---------------------------------------------------------------------------
 
-def upload_to_s3(file_path: Path) -> None:
+def upload_to_s3(
+    file_path: Path,
+    job_id: str,
+) -> None:
     """
-    Upload a file to the shared S3 bucket using the AWS CLI.
+    Upload a file to the incoming/<job-id>/ location in the shared
+    S3 bucket.
+
+    AWS credentials are intentionally NOT configured inside this
+    application.
+
+    Examples:
+
+    Local development:
+        AWS_PROFILE=s3profile python3 producer.py
+
+    GitHub Actions:
+        Credentials are provided through the GitHub OIDC / AWS STS
+        workflow before this script executes.
 
     check=True causes subprocess.run() to raise an exception if the
-    AWS CLI command returns a non-zero exit code. This prevents the
-    producer workflow from continuing after a failed upload.
+    AWS CLI command returns a non-zero exit code.
     """
 
-    destination = f"{S3_BUCKET}/{file_path.name}"
+    destination = (
+        f"{S3_BUCKET}/"
+        f"{S3_INCOMING_PREFIX}/"
+        f"{job_id}/"
+        f"{file_path.name}"
+    )
 
     print(f"Uploading {file_path} -> {destination}")
 
@@ -183,8 +216,24 @@ def main() -> None:
     # Ensure the local output directory exists.
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Generate a globally unique identifier for this submission.
+    #
+    # UUIDs allow multiple producers or CI jobs to submit work
+    # concurrently without requiring a centralized counter.
+    job_id = str(uuid.uuid4())
+
     package_file = OUTPUT_DIR / PACKAGE_NAME
     metadata_file = OUTPUT_DIR / METADATA_NAME
+
+    # -----------------------------------------------------------------------
+    # Submission information
+    # -----------------------------------------------------------------------
+
+    print()
+    print("=" * 60)
+    print("Producer submission")
+    print("=" * 60)
+    print(f"Job ID: {job_id}")
 
     # -----------------------------------------------------------------------
     # Step 1: Generate the simulated software artifact.
@@ -215,6 +264,7 @@ def main() -> None:
         metadata_file=metadata_file,
         package_file=package_file,
         checksum=checksum,
+        job_id=job_id,
     )
 
     # -----------------------------------------------------------------------
@@ -228,32 +278,46 @@ def main() -> None:
     print()
     print("[4/5] Uploading binary artifact to S3...")
 
-    upload_to_s3(package_file)
+    upload_to_s3(
+        file_path=package_file,
+        job_id=job_id,
+    )
 
     # -----------------------------------------------------------------------
     # Step 5: Upload the manifest LAST.
     #
-    # The consumer can treat the presence of the manifest as the
-    # "artifact ready" signal.
+    # The consumer can treat the presence of packagefile.yaml as the
+    # "submission ready" signal.
     # -----------------------------------------------------------------------
 
     print()
     print("[5/5] Uploading metadata manifest to S3...")
 
-    upload_to_s3(metadata_file)
+    upload_to_s3(
+        file_path=metadata_file,
+        job_id=job_id,
+    )
 
     # -----------------------------------------------------------------------
     # Final summary
     # -----------------------------------------------------------------------
 
+    s3_job_path = (
+        f"{S3_BUCKET}/"
+        f"{S3_INCOMING_PREFIX}/"
+        f"{job_id}"
+    )
+
     print()
     print("=" * 60)
     print("Producer completed successfully.")
     print("=" * 60)
+    print(f"Job ID         : {job_id}")
     print(f"Local artifact : {package_file}")
     print(f"Local manifest : {metadata_file}")
-    print(f"S3 artifact    : {S3_BUCKET}/{PACKAGE_NAME}")
-    print(f"S3 manifest    : {S3_BUCKET}/{METADATA_NAME}")
+    print(f"S3 location    : {s3_job_path}/")
+    print(f"S3 artifact    : {s3_job_path}/{PACKAGE_NAME}")
+    print(f"S3 manifest    : {s3_job_path}/{METADATA_NAME}")
     print(f"SHA-256        : {checksum}")
 
 
